@@ -13,7 +13,7 @@ Agent Skills package that gives an agent a video input. Installable across Claud
 - `.codex-plugin/plugin.json` — Codex/agents manifest; `"skills": "./skills/"` points the Agent Skills CLI at the self-contained skill folder.
 - `.agents/plugins/marketplace.json` — agents marketplace listing pointing at the repo-root plugin.
 - `CLAUDE.md` → `@AGENTS.md` — generic-agent entry point.
-- `apps/explainer/` — standalone "Explainer Studio" web app (topic / text / link → Claude storyboard → canvas motion-graphics video). Not part of the skill bundle; see its README.
+- `apps/explainer/` — standalone "Explainer Studio" web app (topic / text / link → Claude story storyboard → vertical illustrated story reel with AI voice-over). Not part of the skill bundle; see its README.
 - `tests/` — pytest suite (ffmpeg-synthesized clips; no network).
 
 ## Orientation

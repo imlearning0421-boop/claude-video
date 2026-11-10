@@ -1,7 +1,9 @@
 """Storyboard generation for the explainer-video app.
 
-Turns a topic, a block of text, or a web link into a storyboard: a list of
-motion-graphics scenes the browser renderer (static/app.js) animates.
+Turns a topic, a block of text, or a web link into a *story* storyboard for a
+vertical (9:16) illustrated reel: a small cast of cartoon characters, everyday
+scenes, phone screens (chats, calls, app cards, a shop page), one caption per
+scene, and a closing lesson card. The browser renderer (static/app.js) draws it.
 
 Claude writes the storyboard when an Anthropic credential is available; an
 offline generator keeps the app usable (and testable) without one.
@@ -16,85 +18,115 @@ from html.parser import HTMLParser
 
 MODEL = "claude-opus-5-5"
 
-SCENE_TYPES = ("title", "bullets", "stat", "steps", "comparison", "quote", "outro")
-PALETTES = ("sunset", "ocean", "forest", "neon", "candy", "mono")
+VISUALS = ("character", "two_characters", "phone", "photo", "lesson")
+SETTINGS = ("home", "office", "night", "festive")
+POSES = ("neutral", "phone_call", "holding_phone", "thinking", "sad", "happy", "surprised")
+SCREENS = ("chat", "call", "card", "store")
+GENDERS = ("male", "female")
+SKINS = ("light", "medium", "tan", "dark")
+HAIRS = ("short", "side_part", "curly", "long", "bun")
+OUTFITS = ("shirt", "kurta", "tshirt", "kurti", "saree")
+COLORS = ("blue", "green", "maroon", "mustard", "teal", "purple", "grey", "pink")
 LANGUAGES = {
     "english": "English",
     "hindi": "Hindi (Devanagari script)",
-    "hinglish": "Hinglish (Hindi written in Latin script, mixed with English words)",
+    "hinglish": "Hinglish (Hindi written in Latin script, mixed naturally with English words)",
 }
 MAX_SOURCE_CHARS = 60_000
+MAX_CAST = 3
 URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
-# Structured-output schema. Every field is required so the renderer never has to
-# guess; scene types that don't use a field get "" or [].
-SCENE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "type": {"type": "string", "enum": list(SCENE_TYPES)},
-        "heading": {"type": "string"},
-        "subheading": {"type": "string"},
-        "emoji": {"type": "string"},
-        "items": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "emoji": {"type": "string"},
-                    "text": {"type": "string"},
-                },
-                "required": ["emoji", "text"],
-                "additionalProperties": False,
-            },
-        },
-        "value": {"type": "string"},
-        "narration": {"type": "string"},
-        "duration": {"type": "number"},
-    },
-    "required": ["type", "heading", "subheading", "emoji", "items", "value", "narration", "duration"],
-    "additionalProperties": False,
-}
 
-STORYBOARD_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "title": {"type": "string"},
-        "palette": {"type": "string", "enum": list(PALETTES)},
-        "scenes": {"type": "array", "items": SCENE_SCHEMA},
-    },
-    "required": ["title", "palette", "scenes"],
-    "additionalProperties": False,
-}
+def _obj(props: dict) -> dict:
+    """A strict JSON-schema object: every property required, nothing extra."""
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
-SYSTEM_PROMPT = """You are the writer and art director of short motion-graphics explainer videos \
-(the animated, kinetic-typography style used by good YouTube explainers).
 
-You receive a topic, some information, or the text of a web page. Turn it into a storyboard that \
-a renderer animates scene by scene. The renderer draws only text, emoji and shapes, so put every \
-idea into the fields below; never describe visuals that need footage or photos.
+_STR = {"type": "string"}
+CAST_SCHEMA = _obj({
+    "id": _STR,
+    "name": _STR,
+    "gender": {"type": "string", "enum": list(GENDERS)},
+    "skin": {"type": "string", "enum": list(SKINS)},
+    "hair": {"type": "string", "enum": list(HAIRS)},
+    "beard": {"type": "boolean"},
+    "outfit": {"type": "string", "enum": list(OUTFITS)},
+    "color": {"type": "string", "enum": list(COLORS)},
+})
+PHONE_SCHEMA = _obj({
+    "screen": {"type": "string", "enum": list(SCREENS)},
+    "app": _STR,
+    "messages": {"type": "array", "items": _obj({
+        "side": {"type": "string", "enum": ["me", "them"]},
+        "sender": _STR,
+        "text": _STR,
+    })},
+    "title": _STR,
+    "status": _STR,
+    "lines": {"type": "array", "items": _STR},
+    "button": _STR,
+    "emoji": _STR,
+})
+SCENE_SCHEMA = _obj({
+    "visual": {"type": "string", "enum": list(VISUALS)},
+    "setting": {"type": "string", "enum": list(SETTINGS)},
+    "character": _STR,
+    "other_character": _STR,
+    "other_setting": {"type": "string", "enum": list(SETTINGS)},
+    "pose": {"type": "string", "enum": list(POSES)},
+    "speaker": _STR,
+    "narration": _STR,
+    "highlight": {"type": "array", "items": _STR},
+    "phone": PHONE_SCHEMA,
+    "lesson": _obj({"book": _STR, "heading": _STR}),
+})
+STORYBOARD_SCHEMA = _obj({
+    "title": _STR,
+    "cast": {"type": "array", "items": CAST_SCHEMA},
+    "scenes": {"type": "array", "items": SCENE_SCHEMA},
+})
 
-Scene types and the fields each one uses:
-- title: heading (the hook, at most 6 words), subheading (one short line), emoji. Always the first scene.
-- bullets: heading, items (2-4 items, each an emoji and at most 7 words of text).
-- stat: value (a striking number with its unit, such as "70%", "8 min", "1.5 billion"), heading \
-(what the number means, at most 8 words), emoji. Use only numbers the source supports or that are \
-well established; never invent statistics.
-- steps: heading, items (3-4 steps of at most 5 words each, in order).
-- comparison: heading, exactly 2 items (the two sides, each an emoji and at most 4 words), \
-subheading (the key difference, one line).
-- quote: heading (a definition, key insight or memorable line, at most 18 words), subheading \
-(who said it or "Key idea"), emoji.
-- outro: heading (the one-line takeaway), subheading (a closing nudge), emoji. Always the last scene.
+SYSTEM_PROMPT = """You write short vertical story reels that explain an idea through a relatable \
+everyday story, in the style of illustrated Instagram/YouTube Shorts storytelling: simple cartoon \
+characters in rooms, phone screens showing chats, calls and apps, one caption at a time, and a \
+closing lesson card that names the idea.
+
+You receive a topic, some information, or the text of a web page. Invent a small, believable \
+situation (friends, family, office, college) whose characters run into that idea, let the story \
+build to a turn, then end with lesson card(s) that state the idea plainly. When the source is a \
+book, concept or principle, name it on the lesson card (lesson.book) and explain it accurately. \
+Never invent statistics or facts about real people.
+
+The renderer draws only these visuals, so tell the whole story with them:
+- character: one cast member, half-body, in a room (setting). pose is one of neutral, phone_call \
+(phone at ear), holding_phone (looking at the phone), thinking, sad, happy, surprised.
+- two_characters: split screen, `character` on top in `setting`, `other_character` below in \
+`other_setting`. Use it for phone conversations between two people.
+- phone: a phone screen fills the frame. phone.screen is:
+    chat: a messaging app. phone.app = contact or group name; phone.messages in order \
+(side "me" = the main character, "them" = others, sender = their name for group chats).
+    call: an incoming call. phone.app = caller's name.
+    card: an app card such as a booking, leave approval, payment or reminder. phone.app = app \
+name, phone.title = card heading, phone.status = short status chip ("Confirmed", "Approved"), \
+phone.lines = 1-3 short "Label: value" rows, phone.button = button text.
+    store: a shopping page. phone.app = shop name, phone.title = product, phone.emoji = one emoji \
+picturing it, phone.lines = [short product subtitle], phone.button = "Add to Cart" or similar.
+- photo: a framed old photo of the first two cast members (memories, childhood).
+- lesson: the closing card. lesson.book = book or concept name ("" if none), lesson.heading = the \
+big title shown on the card (usually the book or idea name). Use 1-3 lesson scenes at the end; \
+their narration explains the idea.
 
 Rules:
-- 6 to 9 scenes, mixing types so the video stays visually varied. Do not repeat a type back to back.
-- narration: what a voice-over says during the scene, 1-2 conversational sentences. It is shown as \
-subtitles, so keep it under 30 words.
-- duration: seconds the scene stays on screen, between 4 and 9, long enough to read the narration.
-- Fields a scene type doesn't use are "" (or [] for items).
-- Pick the palette that suits the topic's mood.
-- On-screen text is short and punchy; the narration carries the detail.
-- Be accurate. If the source is thin, explain only what you are confident is true."""
+- cast: 1-3 people. id is a short lowercase slug; pick looks that suit each person (beard only for \
+men). Use Indian names and settings when writing Hindi or Hinglish.
+- 10-18 scenes for about a minute (fewer for shorter videos). One scene = one caption.
+- narration: the caption and voice-over for that scene, at most 14 words. Narrator lines tell the \
+story ("Amit ne dost ko message kiya—"); dialogue goes in double quotes with speaker = that \
+character's id. Otherwise speaker = "narrator".
+- highlight: 0-2 single words or short phrases copied exactly from the narration to colour.
+- Switch visuals often, as a fast reel does; don't repeat the same visual more than twice in a row.
+- Fields a visual doesn't use are "" or []; character must be a cast id for character, \
+two_characters and photo scenes. Keep every phone text short enough to fit a phone screen."""
 
 
 class StoryboardError(Exception):
@@ -196,17 +228,17 @@ def build_source(raw: str) -> dict:
 def user_prompt(source: dict, language: str, target_seconds: int) -> str:
     lang = LANGUAGES.get(language, LANGUAGES["english"])
     if source["kind"] == "topic":
-        what = f"Make an explainer video about this topic: {source['content']}"
+        what = f"Make a story reel that explains this: {source['content']}"
     elif source["kind"] == "url":
         what = (
-            f"Make an explainer video that explains the main ideas of this web page "
+            f"Make a story reel that explains the main idea of this web page "
             f"({source['url']}).\n\n<page>\n{source['content']}\n</page>"
         )
     else:
-        what = f"Make an explainer video from this information.\n\n<information>\n{source['content']}\n</information>"
+        what = f"Make a story reel that explains this information.\n\n<information>\n{source['content']}\n</information>"
     return (
-        f"{what}\n\nWrite all on-screen text and narration in {lang}. "
-        f"Aim for a total length of about {target_seconds} seconds."
+        f"{what}\n\nWrite every caption, phone text and card in {lang}. "
+        f"Aim for about {target_seconds} seconds of narration (roughly {max(5, target_seconds // 4)} scenes)."
     )
 
 
@@ -218,46 +250,123 @@ def _clip(value, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+def _pick(value, allowed, default):
+    return value if value in allowed else default
+
+
+def estimate_duration(narration: str) -> float:
+    """Seconds a caption stays up when there is no voice-over to time it."""
+    words = len(narration.split())
+    return round(min(9.0, max(2.2, 0.9 + words * 0.42)), 2)
+
+
+def _slug(text: str, fallback: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "", str(text or "").lower())[:12]
+    return slug or fallback
+
+
+def _cast(raw_cast) -> list[dict]:
+    cast, seen = [], set()
+    for i, person in enumerate(raw_cast if isinstance(raw_cast, list) else []):
+        if not isinstance(person, dict) or len(cast) >= MAX_CAST:
+            continue
+        cid = _slug(person.get("id") or person.get("name"), f"p{i}")
+        if cid in seen or cid == "narrator":
+            cid = f"{cid}{i}"
+        seen.add(cid)
+        gender = _pick(person.get("gender"), GENDERS, "male")
+        cast.append({
+            "id": cid,
+            "name": _clip(person.get("name") or cid.title(), 24),
+            "gender": gender,
+            "skin": _pick(person.get("skin"), SKINS, "medium"),
+            "hair": _pick(person.get("hair"), HAIRS, "short" if gender == "male" else "long"),
+            "beard": bool(person.get("beard")) and gender == "male",
+            "outfit": _pick(person.get("outfit"), OUTFITS, "shirt" if gender == "male" else "kurti"),
+            "color": _pick(person.get("color"), COLORS, "blue"),
+        })
+    if not cast:
+        cast.append({"id": "aarav", "name": "Aarav", "gender": "male", "skin": "medium", "hair": "short",
+                     "beard": False, "outfit": "shirt", "color": "blue"})
+    return cast
+
+
+def _phone(raw) -> dict:
+    raw = raw if isinstance(raw, dict) else {}
+    messages = []
+    for msg in raw.get("messages") or []:
+        if isinstance(msg, dict) and _clip(msg.get("text"), 90):
+            messages.append({
+                "side": "me" if msg.get("side") == "me" else "them",
+                "sender": _clip(msg.get("sender"), 20),
+                "text": _clip(msg.get("text"), 90),
+            })
+    return {
+        "screen": _pick(raw.get("screen"), SCREENS, "card"),
+        "app": _clip(raw.get("app"), 28),
+        "messages": messages[:5],
+        "title": _clip(raw.get("title"), 40),
+        "status": _clip(raw.get("status"), 18),
+        "lines": [_clip(x, 40) for x in (raw.get("lines") or []) if _clip(x, 40)][:3],
+        "button": _clip(raw.get("button"), 20),
+        "emoji": _clip(raw.get("emoji"), 8),
+    }
+
+
 def normalize(board: dict) -> dict:
     """Clamp a storyboard to what the renderer can draw. Raises on an empty board."""
     scenes_in = board.get("scenes") if isinstance(board, dict) else None
     if not isinstance(scenes_in, list) or not scenes_in:
         raise StoryboardError("Claude returned an empty storyboard. Try again or add more detail.")
+    cast = _cast(board.get("cast"))
+    ids = [c["id"] for c in cast]
+    by_name = {c["name"].lower(): c["id"] for c in cast}
+
+    def who(value, default):
+        value = str(value or "").strip().lower()
+        if value in ids:
+            return value
+        return by_name.get(value, default)
+
     scenes = []
-    for scene in scenes_in[:12]:
-        if not isinstance(scene, dict):
+    for raw in scenes_in[:24]:
+        if not isinstance(raw, dict):
             continue
-        kind = scene.get("type") if scene.get("type") in SCENE_TYPES else "bullets"
-        items = []
-        for item in scene.get("items") or []:
-            if isinstance(item, dict) and _clip(item.get("text"), 60):
-                items.append({"emoji": _clip(item.get("emoji"), 8), "text": _clip(item.get("text"), 60)})
-        limit = {"comparison": 2, "steps": 4, "bullets": 4}.get(kind, 4)
-        items = items[:limit]
-        if kind in ("bullets", "steps") and not items:
-            kind = "quote"
-        if kind == "comparison" and len(items) < 2:
-            kind = "bullets" if items else "quote"
-        if kind == "stat" and not _clip(scene.get("value"), 20):
-            kind = "quote"
-        try:
-            duration = float(scene.get("duration") or 6)
-        except (TypeError, ValueError):
-            duration = 6.0
+        narration = _clip(raw.get("narration"), 140)
+        if not narration:
+            continue
+        visual = _pick(raw.get("visual"), VISUALS, "character")
+        character = who(raw.get("character"), ids[0])
+        other = who(raw.get("other_character"), "")
+        if visual == "two_characters" and (not other or other == character):
+            other = next((i for i in ids if i != character), "")
+            if not other:
+                visual = "character"
+        if visual == "photo" and len(ids) < 2:
+            visual = "character"
+        phone = _phone(raw.get("phone"))
+        if visual == "phone" and phone["screen"] == "chat" and not phone["messages"]:
+            phone["screen"] = "card"
+        lesson = raw.get("lesson") if isinstance(raw.get("lesson"), dict) else {}
+        speaker = who(raw.get("speaker"), "narrator")
+        highlight = [_clip(h, 30) for h in (raw.get("highlight") or []) if _clip(h, 30)]
         scenes.append({
-            "type": kind,
-            "heading": _clip(scene.get("heading"), 140),
-            "subheading": _clip(scene.get("subheading"), 120),
-            "emoji": _clip(scene.get("emoji"), 8),
-            "items": items,
-            "value": _clip(scene.get("value"), 20),
-            "narration": _clip(scene.get("narration"), 260),
-            "duration": round(min(10.0, max(3.5, duration)), 2),
+            "visual": visual,
+            "setting": _pick(raw.get("setting"), SETTINGS, "home"),
+            "character": character,
+            "other_character": other if visual == "two_characters" else "",
+            "other_setting": _pick(raw.get("other_setting"), SETTINGS, "festive"),
+            "pose": _pick(raw.get("pose"), POSES, "neutral"),
+            "speaker": speaker,
+            "narration": narration,
+            "highlight": [h for h in highlight if h.lower() in narration.lower()][:2],
+            "phone": phone,
+            "lesson": {"book": _clip(lesson.get("book"), 60), "heading": _clip(lesson.get("heading"), 70)},
+            "duration": estimate_duration(narration),
         })
     if not scenes:
         raise StoryboardError("Claude returned an empty storyboard. Try again or add more detail.")
-    palette = board.get("palette") if board.get("palette") in PALETTES else "sunset"
-    return {"title": _clip(board.get("title") or scenes[0]["heading"], 100), "palette": palette, "scenes": scenes}
+    return {"title": _clip(board.get("title") or scenes[0]["narration"], 100), "cast": cast, "scenes": scenes}
 
 
 # ------------------------------------------------------------------- generators
@@ -307,58 +416,69 @@ def generate_with_claude(source: dict, language: str, target_seconds: int, clien
 
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?।])\s+")
-_EMOJIS = ["💡", "🚀", "🔍", "⚙️", "🌍", "📈", "🧠", "✨", "🎯", "🔗", "📌", "🧩"]
+
+
+def _short_sentences(text: str) -> list[str]:
+    """Split text into caption-sized pieces (at most ~14 words)."""
+    pieces = []
+    for sentence in _SENTENCE_RE.split(text.replace("\n", " ")):
+        words = sentence.split()
+        while words:
+            pieces.append(" ".join(words[:14]))
+            words = words[14:]
+    return [p for p in pieces if p]
 
 
 def generate_offline(source: dict, language: str = "english", target_seconds: int = 60) -> dict:
     """A simple storyboard built without Claude, so the app works with no API key.
 
-    It only reshapes the user's own words; it adds no facts.
+    It only reshapes the user's own words; it adds no facts and no invented story.
     """
     label = source["label"]
     if source["kind"] == "text":
         label = " ".join(re.split(r"[.!?।:]", label, maxsplit=1)[0].split()[:7])
-    sentences = [s.strip() for s in _SENTENCE_RE.split(source["content"].replace("\n", " ")) if s.strip()]
-    if source["kind"] == "topic" or len(sentences) < 2:
-        topic = label
-        sentences = [
-            f"{topic}: what it is, why it matters, and how it works.",
-            f"Start with the core idea behind {topic}.",
-            f"Then look at the main parts that make {topic} work.",
-            f"Finally, see where {topic} shows up in real life.",
+    lines = _short_sentences(source["content"])
+    if source["kind"] == "topic" or len(lines) < 2:
+        lines = [
+            f"Aarav kab se {label} ke baare mein soch raha tha.",
+            "Usne apne dost ko message kiya—",
+            f"\"Yaar, {label} samjha de na?\"",
+            "Dost ne kaha, \"Aaj shaam call karta hoon.\"",
+            "Aarav ne socha, pehle khud padh leta hoon.",
+            f"{label}: chhote steps mein samjho, ek-ek karke.",
+        ] if language != "english" else [
+            f"Aarav had been wondering about {label} for days.",
+            "So he texted his friend—",
+            f"\"Can you explain {label} to me?\"",
+            "His friend said, \"I'll call you this evening.\"",
+            "Aarav decided to read up on it first.",
+            f"{label}: understand it in small steps, one at a time.",
         ]
-    short = [_clip(s, 60) for s in sentences]
-    numbers = re.findall(r"\b\d[\d,.]*\s?(?:%|percent|million|billion|crore|lakh|km|kg|years?)?", source["content"])
-    scenes = [{
-        "type": "title", "heading": _clip(label, 50), "subheading": "Explained in a minute",
-        "emoji": "🎬", "items": [], "value": "", "narration": sentences[0], "duration": 5,
-    }]
-    scenes.append({
-        "type": "bullets", "heading": "The big picture", "subheading": "", "emoji": "",
-        "items": [{"emoji": _EMOJIS[i % len(_EMOJIS)], "text": _clip(s, 48)} for i, s in enumerate(short[1:4])],
-        "value": "", "narration": " ".join(sentences[1:3]), "duration": 7,
-    })
-    if numbers:
-        scenes.append({
-            "type": "stat", "heading": _clip(next((s for s in sentences if numbers[0] in s), label), 60),
-            "subheading": "", "emoji": "📊", "items": [], "value": numbers[0].strip(),
-            "narration": _clip(next((s for s in sentences if numbers[0] in s), ""), 200), "duration": 6,
-        })
-    if len(short) > 4:
-        scenes.append({
-            "type": "steps", "heading": "Step by step", "subheading": "", "emoji": "",
-            "items": [{"emoji": "", "text": _clip(s, 32)} for s in short[4:8]],
-            "value": "", "narration": " ".join(sentences[4:6]), "duration": 8,
-        })
-    scenes.append({
-        "type": "quote", "heading": _clip(max(sentences, key=len), 120), "subheading": "Key idea",
-        "emoji": "💬", "items": [], "value": "", "narration": _clip(max(sentences, key=len), 200), "duration": 7,
-    })
-    scenes.append({
-        "type": "outro", "heading": _clip(label, 60), "subheading": "Now you know!",
-        "emoji": "✅", "items": [], "value": "", "narration": "That's the idea in a nutshell.", "duration": 5,
-    })
-    return normalize({"title": label, "palette": "sunset", "scenes": scenes})
+    cast = [
+        {"id": "aarav", "name": "Aarav", "gender": "male", "skin": "medium", "hair": "short",
+         "beard": False, "outfit": "shirt", "color": "blue"},
+        {"id": "ravi", "name": "Ravi", "gender": "male", "skin": "tan", "hair": "side_part",
+         "beard": True, "outfit": "kurta", "color": "green"},
+    ]
+    poses = ["neutral", "thinking", "holding_phone", "phone_call", "happy"]
+    scenes = []
+    body, closing = lines[:-1] or lines, lines[-1]
+    for i, line in enumerate(body[:12]):
+        base = {"setting": "home", "character": "aarav", "other_character": "", "other_setting": "festive",
+                "pose": poses[i % len(poses)], "speaker": "narrator", "narration": line, "highlight": [],
+                "phone": {}, "lesson": {}}
+        if i % 3 == 1:
+            base.update(visual="phone", phone={"screen": "chat", "app": "Ravi",
+                                               "messages": [{"side": "me", "sender": "", "text": line}]})
+        elif i % 3 == 2:
+            base.update(visual="phone", phone={"screen": "card", "app": "Notes", "title": label,
+                                               "status": "Note", "lines": [line[:40]], "button": "Open"})
+        else:
+            base.update(visual="character")
+        scenes.append(base)
+    scenes.append({"visual": "lesson", "setting": "home", "character": "aarav", "narration": closing,
+                   "speaker": "narrator", "highlight": [], "lesson": {"book": "", "heading": label}})
+    return normalize({"title": label, "cast": cast, "scenes": scenes})
 
 
 def has_claude_credentials() -> bool:
@@ -392,4 +512,5 @@ def make_storyboard(raw: str, language: str = "english", target_seconds: int = 6
         board, engine = generate_with_claude(source, language, target_seconds), "claude"
     else:
         board, engine = generate_offline(source, language, target_seconds), "offline"
+    board["language"] = language
     return {"storyboard": board, "engine": engine, "source": {"kind": source["kind"], "label": source["label"]}}

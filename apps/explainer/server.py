@@ -5,8 +5,9 @@
 
 Endpoints
     GET  /                  the app (static/)
-    GET  /api/status        {"engine": "claude" | "offline", "mp4": bool}
+    GET  /api/status        {"engine": "claude" | "offline", "mp4": bool, "voice": provider | null}
     POST /api/storyboard    {"input", "language", "seconds"} -> storyboard JSON
+    POST /api/voice         {"text", "role", "language"} -> MP3 voice-over (needs a TTS key)
     POST /api/mp4           body: a WebM recording -> MP4 (needs ffmpeg)
 """
 from __future__ import annotations
@@ -26,6 +27,7 @@ STATIC = HERE / "static"
 sys.path.insert(0, str(HERE))
 
 import storyboard  # noqa: E402
+import tts  # noqa: E402
 
 MAX_JSON_BYTES = 1_000_000
 MAX_VIDEO_BYTES = 500_000_000
@@ -80,6 +82,7 @@ class Handler(BaseHTTPRequestHandler):
                 "engine": "claude" if storyboard.has_claude_credentials() else "offline",
                 "mp4": shutil.which("ffmpeg") is not None,
                 "model": storyboard.MODEL,
+                "voice": tts.provider(),
             })
             return
         rel = "index.html" if path in ("", "/") else path.lstrip("/")
@@ -112,6 +115,21 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._json(200, result)
             return
+        if path == "/api/voice":
+            body = self._body(MAX_JSON_BYTES)
+            if body is None:
+                return
+            try:
+                req = json.loads(body.decode("utf-8"))
+                audio = tts.speak(req.get("text", ""), req.get("role", "narrator"), req.get("language", "hinglish"))
+            except (ValueError, AttributeError):
+                self._json(400, {"error": "Send JSON like {\"text\": \"Hello\", \"role\": \"narrator\"}."})
+                return
+            except tts.VoiceError as exc:
+                self._json(501 if tts.provider() is None else 502, {"error": str(exc)})
+                return
+            self._send(200, audio, "audio/mpeg")
+            return
         if path == "/api/mp4":
             if not shutil.which("ffmpeg"):
                 self._json(501, {"error": "ffmpeg is not installed on the server."})
@@ -141,7 +159,8 @@ def main() -> None:
     server = make_server(args.host, args.port)
     engine = "Claude (" + storyboard.MODEL + ")" if storyboard.has_claude_credentials() else \
         "offline demo (set ANTHROPIC_API_KEY and `pip install anthropic` for Claude)"
-    print(f"Explainer video app → http://{args.host}:{args.port}\nStoryboards by: {engine}")
+    voice = tts.provider() or "none (set ELEVENLABS_API_KEY or OPENAI_API_KEY for AI voice-over)"
+    print(f"Explainer video app → http://{args.host}:{args.port}\nStoryboards by: {engine}\nVoice-over: {voice}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

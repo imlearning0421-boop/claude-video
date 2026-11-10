@@ -6,7 +6,7 @@
   <title>Explainer Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&family=Noto+Sans+Devanagari:wght@400;600;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700;800&family=Playfair+Display:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,45 +17,40 @@
 
   <main class="layout">
     <section class="panel input-panel">
-      <h2>1 · What should the video explain?</h2>
-      <textarea id="input" rows="6" placeholder="Type a topic (e.g. “How do black holes form?”), paste some information, or paste a web link (https://…)"></textarea>
-      <div class="hint" id="inputKind">Topic, text, or link — detected automatically.</div>
+      <h2>1 · Video kis baare mein ho?</h2>
+      <textarea id="input" rows="6" placeholder="Topic likho (jaise “Dosti mein paisa kyun matter nahi karta”), koi information paste karo, ya web link (https://…) do"></textarea>
+      <div class="hint" id="inputKind">Topic, text, ya link — apne aap pehchaan lega.</div>
 
       <div class="row">
         <label>Language
           <select id="language">
+            <option value="hinglish" selected>Hinglish</option>
             <option value="english">English</option>
-            <option value="hinglish">Hinglish</option>
             <option value="hindi">हिन्दी (Hindi)</option>
           </select>
         </label>
         <label>Length
           <select id="seconds">
             <option value="30">~30 sec</option>
+            <option value="45">~45 sec</option>
             <option value="60" selected>~1 min</option>
             <option value="90">~1.5 min</option>
-            <option value="120">~2 min</option>
           </select>
         </label>
       </div>
-      <button id="generate" class="primary">✨ Create explainer video</button>
+      <button id="generate" class="primary">✨ Story video banao</button>
       <div id="status" class="status" role="status"></div>
 
       <div id="storyWrap" class="story hidden">
-        <h2>2 · Storyboard <span class="muted">(edit anything)</span></h2>
-        <div class="row">
-          <label>Colour style
-            <select id="palette"></select>
-          </label>
-        </div>
+        <h2>2 · Storyboard <span class="muted">(kuch bhi badlo)</span></h2>
         <ol id="scenes"></ol>
       </div>
     </section>
 
     <section class="panel preview-panel">
       <div class="stage">
-        <canvas id="canvas" width="1280" height="720"></canvas>
-        <div id="empty" class="empty">Your video will appear here</div>
+        <canvas id="canvas" width="720" height="1280"></canvas>
+        <div id="empty" class="empty">Aapki video yahan dikhegi</div>
       </div>
       <div class="controls">
         <button id="play" disabled>▶ Play</button>
@@ -64,16 +59,18 @@
       </div>
       <div class="controls toggles">
         <label><input type="checkbox" id="music" checked> Background music</label>
-        <label><input type="checkbox" id="voice"> Voice-over in preview</label>
-        <label><input type="checkbox" id="subs" checked> Subtitles</label>
+        <label id="voiceLabel"><input type="checkbox" id="voice"> Browser voice (sirf preview)</label>
+        <label><input type="checkbox" id="subs" checked> Captions</label>
+        <button id="revoice" class="hidden small">🎙 Voice dobara banao</button>
       </div>
       <h2>3 · Download</h2>
       <div class="controls">
-        <button id="record" class="primary" disabled>⏺ Render video</button>
+        <button id="record" class="primary" disabled>⏺ Video render karo</button>
         <a id="dlWebm" class="button hidden" download="explainer.webm">⬇ WebM</a>
         <button id="dlMp4" class="hidden">⬇ MP4</button>
       </div>
-      <p class="hint">Rendering plays the video once in real time, so keep this tab open and visible until it finishes. The downloaded video has animation, subtitles and music (the preview voice-over comes from your browser and isn't recorded).</p>
+      <p class="hint" id="voiceNote"></p>
+      <p class="hint">Render karte waqt video ek baar real time mein chalti hai, isliye tab khula aur visible rakho. Video 9:16 (720×1280) banti hai — Reels/Shorts ke liye.</p>
     </section>
   </main>
 
