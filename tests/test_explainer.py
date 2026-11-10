@@ -291,3 +291,29 @@ def test_server_voice_endpoint(running_server, no_tts_keys, monkeypatch):
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as res:
         assert res.headers["Content-Type"] == "audio/mpeg" and res.read() == b"ID3fake-audio"
+
+
+def test_tts_retries_when_busy(no_tts_keys, monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    monkeypatch.setattr(tts.time, "sleep", lambda s: None)
+    attempts = []
+
+    def fake_urlopen(req, timeout):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise urllib.error.HTTPError(req.full_url, 429, "busy", {}, None)
+        return _Reply(b"ID3" + b"\0" * 200)
+
+    monkeypatch.setattr(tts.urllib.request, "urlopen", fake_urlopen)
+    assert tts.speak("Phir se").startswith(b"ID3") and len(attempts) == 3
+
+
+def test_tts_paid_voice_message(no_tts_keys, monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+
+    def fake_urlopen(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 402, "pay", {}, None)
+
+    monkeypatch.setattr(tts.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(tts.VoiceError, match="paid"):
+        tts.speak("Hello")

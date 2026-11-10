@@ -800,7 +800,7 @@
         say(`Voice-over bana rahe hain… ${done}/${need.length}`);
       }
     };
-    await Promise.all([worker(), worker(), worker()]);
+    await Promise.all([worker(), worker()]);  // free TTS plans allow few requests at once
     if (job !== voiceJob) return;
     layout(); setTime(Math.min(t, total));
     say(failed ? `Kuch voice clips nahi bane: ${failed}` : `${board.scenes.length} scenes · ${fmt(total)} · AI voice-over ready`, !!failed);

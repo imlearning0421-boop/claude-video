@@ -17,17 +17,19 @@ import hashlib
 import json
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
 
 ROLES = ("narrator", "male", "female")
 
-# Premade voices available on every account; any of them can be swapped via env vars.
+# Default voices that free-plan API keys can use (free keys get a 402 for Voice Library
+# voices such as Rachel). Swap any of them via the EXPLAINER_VOICE_* env vars.
 ELEVENLABS_VOICES = {
     "narrator": "pNInz6obpgDQGcFmaJgB",  # Adam
     "male": "ErXwobaYiN019PkySvjV",      # Antoni
-    "female": "21m00Tcm4TlvDq8ikWAM",    # Rachel
+    "female": "EXAVITQu4vr4xnSDxMaL",    # Sarah
 }
 OPENAI_VOICES = {"narrator": "ash", "male": "onyx", "female": "coral"}
 OPENAI_MODEL = "gpt-4o-mini-tts"
@@ -48,6 +50,10 @@ LANG_HINT = {
 
 class VoiceError(Exception):
     """Speech could not be made; the message is safe to show the user."""
+
+
+class _Busy(Exception):
+    """HTTP 429: too many requests at once (free plans allow few) or no credit left; retried."""
 
 
 def provider() -> str | None:
@@ -74,8 +80,11 @@ def _post(url: str, headers: dict, payload: dict, timeout: float = 60.0) -> byte
         detail = exc.read(400).decode("utf-8", "replace")
         if exc.code in (401, 403):
             raise VoiceError("The text-to-speech API key was rejected.") from exc
+        if exc.code == 402:
+            raise VoiceError("This voice needs a paid text-to-speech plan; pick another voice with "
+                             "EXPLAINER_VOICE_NARRATOR / _MALE / _FEMALE.") from exc
         if exc.code == 429:
-            raise VoiceError("The text-to-speech service is rate-limited or out of credit.") from exc
+            raise _Busy(detail) from exc
         raise VoiceError(f"Text-to-speech failed ({exc.code}): {detail}") from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise VoiceError(f"Could not reach the text-to-speech service: {exc}") from exc
@@ -119,7 +128,15 @@ def speak(text: str, role: str = "narrator", language: str = "hinglish") -> byte
         if key in _CACHE:
             _CACHE.move_to_end(key)
             return _CACHE[key]
-    audio = (_elevenlabs if which == "elevenlabs" else _openai)(text, role, language)
+    call = _elevenlabs if which == "elevenlabs" else _openai
+    for attempt in range(4):
+        try:
+            audio = call(text, role, language)
+            break
+        except _Busy:
+            if attempt == 3:
+                raise VoiceError("The text-to-speech service is busy or out of credit. Try again in a minute.")
+            time.sleep(1.5 * (attempt + 1))
     if len(audio) < 100:
         raise VoiceError("The text-to-speech service returned no audio.")
     with _CACHE_LOCK:
