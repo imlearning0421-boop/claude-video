@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Explainer Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&family=Noto+Sans+Devanagari:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo">▶</span> Explainer Studio</div>
+    <div id="engine" class="engine">checking…</div>
+  </header>
+
+  <main class="layout">
+    <section class="panel input-panel">
+      <h2>1 · What should the video explain?</h2>
+      <textarea id="input" rows="6" placeholder="Type a topic (e.g. “How do black holes form?”), paste some information, or paste a web link (https://…)"></textarea>
+      <div class="hint" id="inputKind">Topic, text, or link — detected automatically.</div>
+
+      <div class="row">
+        <label>Language
+          <select id="language">
+            <option value="english">English</option>
+            <option value="hinglish">Hinglish</option>
+            <option value="hindi">हिन्दी (Hindi)</option>
+          </select>
+        </label>
+        <label>Length
+          <select id="seconds">
+            <option value="30">~30 sec</option>
+            <option value="60" selected>~1 min</option>
+            <option value="90">~1.5 min</option>
+            <option value="120">~2 min</option>
+          </select>
+        </label>
+      </div>
+      <button id="generate" class="primary">✨ Create explainer video</button>
+      <div id="status" class="status" role="status"></div>
+
+      <div id="storyWrap" class="story hidden">
+        <h2>2 · Storyboard <span class="muted">(edit anything)</span></h2>
+        <div class="row">
+          <label>Colour style
+            <select id="palette"></select>
+          </label>
+        </div>
+        <ol id="scenes"></ol>
+      </div>
+    </section>
+
+    <section class="panel preview-panel">
+      <div class="stage">
+        <canvas id="canvas" width="1280" height="720"></canvas>
+        <div id="empty" class="empty">Your video will appear here</div>
+      </div>
+      <div class="controls">
+        <button id="play" disabled>▶ Play</button>
+        <input id="seek" type="range" min="0" max="1000" value="0" disabled>
+        <span id="time" class="time">0:00 / 0:00</span>
+      </div>
+      <div class="controls toggles">
+        <label><input type="checkbox" id="music" checked> Background music</label>
+        <label><input type="checkbox" id="voice"> Voice-over in preview</label>
+        <label><input type="checkbox" id="subs" checked> Subtitles</label>
+      </div>
+      <h2>3 · Download</h2>
+      <div class="controls">
+        <button id="record" class="primary" disabled>⏺ Render video</button>
+        <a id="dlWebm" class="button hidden" download="explainer.webm">⬇ WebM</a>
+        <button id="dlMp4" class="hidden">⬇ MP4</button>
+      </div>
+      <p class="hint">Rendering plays the video once in real time, so keep this tab open and visible until it finishes. The downloaded video has animation, subtitles and music (the preview voice-over comes from your browser and isn't recorded).</p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

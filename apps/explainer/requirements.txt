@@ -1,0 +1,2 @@
+# Only needed for Claude-written storyboards; the app runs in offline demo mode without it.
+anthropic>=2.6.0

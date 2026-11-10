@@ -21,6 +21,7 @@ hooks/
 dev-sync.sh
 
 # Non-runtime docs, plans, and tests
+apps/
 tests/
 README.md
 CHANGELOG.md
