@@ -17,6 +17,7 @@
     mono:   { bg: ["#111111", "#3a3a3a"], a: ["#ffd32a", "#ffffff", "#ff5e57", "#0fbcf9"], text: "#ffffff", ink: "#111111" },
   };
   const TRANS = 0.45; // seconds of wipe on each side of a scene boundary
+  let safeBottom = H - 30; // lowest y scene content may use; set per frame above the subtitle box
 
   // ------------------------------------------------------------------ state
   const $ = (id) => document.getElementById(id);
@@ -208,7 +209,7 @@
   function sceneBullets(s, lt, d, p) {
     const top = heading(s, lt, p) + 30;
     const n = s.items.length;
-    const gap = 18, ch = Math.min(110, (H - top - 150 - gap * (n - 1)) / n);
+    const gap = 18, ch = Math.min(110, (safeBottom - top - gap * (n - 1)) / n);
     s.items.forEach((it, i) => {
       const k = easeBack(prog(lt, 0.7 + i * 0.45, 0.6));
       const y = top + i * (ch + gap);
@@ -238,7 +239,8 @@
   }
 
   function sceneStat(s, lt, d, p) {
-    const cx = W / 2, cy = 300, R = 170;
+    // Lift the ring when a tall subtitle box leaves less room below it.
+    const cx = W / 2, cy = Math.max(200, Math.min(300, safeBottom - 305)), R = Math.min(170, cy - 40);
     const k = easeOut(prog(lt, 0.3, 1.8));
     ctx.lineWidth = 22; ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(255,255,255,0.15)";
@@ -263,8 +265,10 @@
     ctx.save(); ctx.translate(cx, cy); ctx.scale(sc, sc); ctx.font = font(800, f.size); ctx.fillText(shown, 0, 0); ctx.restore();
     emoji(s.emoji, cx + R * 0.95, cy - R * 0.85, 64, elastic(prog(lt, 0.8, 1)));
     ctx.textBaseline = "alphabetic";
-    const hf = fit(s.heading, 600, 44, W - 260, 2, 24);
-    kinetic(hf.lines, W / 2, cy + R + 85, hf.size, lt, 1.2, { stagger: 0.05 });
+    const hy = cy + R + 85;
+    let hf = fit(s.heading, 600, 44, W - 260, 2, 24);
+    if (hy + (hf.lines.length - 1) * hf.size * 1.15 > safeBottom) hf = fit(s.heading, 600, 44, W - 260, 1, 18);
+    kinetic(hf.lines, W / 2, hy, hf.size, lt, 1.2, { stagger: 0.05 });
   }
 
   function sceneSteps(s, lt, d, p) {
@@ -297,7 +301,10 @@
 
   function sceneComparison(s, lt, d, p) {
     const top = heading(s, lt, p, 100, 48);
-    const ph = H - top - 210, pw = (W - 260) / 2;
+    const pw = (W - 260) / 2;
+    const subGap = s.subheading ? 56 : 0;
+    const ph = Math.max(120, Math.min(H - top - 210, safeBottom - (top + 40) - subGap));
+    const es = Math.min(96, ph * 0.4);
     [0, 1].forEach((side) => {
       const it = s.items[side];
       const k = easeOut(prog(lt, 0.4 + side * 0.25, 0.8));
@@ -305,9 +312,9 @@
       const y = top + 40;
       ctx.fillStyle = side === 0 ? p.a[0] + "dd" : p.a[3] + "dd";
       roundRect(x, y, pw, ph, 28); ctx.fill();
-      emoji(it.emoji, x + pw / 2, y + ph * 0.38, 96, elastic(prog(lt, 0.9 + side * 0.25, 1)), 0, true);
+      emoji(it.emoji, x + pw / 2, y + ph * 0.38, es, elastic(prog(lt, 0.9 + side * 0.25, 1)), 0, true);
       ctx.fillStyle = p.ink; ctx.textBaseline = "alphabetic";
-      const f = fit(it.text, 800, 40, pw - 50, 2, 20);
+      const f = fit(it.text, 800, Math.min(40, ph * 0.17), pw - 50, 2, 18);
       f.lines.forEach((l, li) => { ctx.textAlign = "center"; ctx.fillText(l, x + pw / 2, y + ph * 0.72 + li * f.size * 1.15); });
     });
     const vs = elastic(prog(lt, 1.2, 0.9));
@@ -318,7 +325,7 @@
     ctx.globalAlpha = easeOut(prog(lt, 1.6, 0.6));
     ctx.fillStyle = p.text; ctx.textBaseline = "alphabetic";
     const sf = fit(s.subheading, 600, 30, W - 260, 1, 18);
-    ctx.textAlign = "center"; ctx.fillText(sf.lines[0] || "", W / 2, top + ph + 100);
+    ctx.textAlign = "center"; ctx.fillText(sf.lines[0] || "", W / 2, top + 40 + ph + 44);
     ctx.globalAlpha = 1;
   }
 
@@ -382,15 +389,23 @@
     comparison: sceneComparison, quote: sceneQuote, outro: sceneOutro };
 
   // ------------------------------------------------------------------ frame
-  function subtitles(s, lt, d, p) {
-    if (!$("subs").checked || !s.narration) return;
-    const words = s.narration.split(/\s+/);
-    const visible = Math.ceil(words.length * clamp(lt / Math.max(1, d - 0.8)));
+  /* Where the subtitle box sits for a scene, or null when there is none. */
+  function subtitleLayout(s) {
+    if (!$("subs").checked || !s.narration) return null;
     const f = fit(s.narration, 600, 26, W - 320, 3, 16);
     const lines = f.lines.slice(0, 3);
     const lh = Math.round(f.size * 1.38);
     const bh = lines.length * lh + 22;
-    const y = H - bh - 34;
+    return { lines, lh, bh, size: f.size, y: H - bh - 34 };
+  }
+
+  function subtitles(s, lt, d, p) {
+    const box = subtitleLayout(s);
+    if (!box) return;
+    const words = s.narration.split(/\s+/);
+    const visible = Math.ceil(words.length * clamp(lt / Math.max(1, d - 0.8)));
+    const { lines, lh, bh, y } = box;
+    ctx.font = font(600, box.size);
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     const bw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 50;
     roundRect(W / 2 - bw / 2, y, bw, bh, 16); ctx.fill();
@@ -432,6 +447,8 @@
       ctx.globalAlpha = 1 - out;
       ctx.translate(W / 2, H / 2); ctx.scale(1 - out * 0.08, 1 - out * 0.08); ctx.translate(-W / 2, -H / 2);
     }
+    const box = subtitleLayout(s);
+    safeBottom = box ? box.y - 18 : H - 30;
     (SCENES[s.type] || sceneBullets)(s, lt, d, p);
     ctx.restore();
     ctx.globalAlpha = 1;
